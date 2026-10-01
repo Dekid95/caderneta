@@ -47,7 +47,7 @@ function persist() {
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-const state = { all: load(), mes: monthOf(todayISO()), metodo: "pix", tipo: "saida", editing: null, armedDelete: null, tab: "lancar" };
+const state = { all: load(), mes: monthOf(todayISO()), metodo: "pix", tipo: "entrada", editing: null, armedDelete: null, tab: "lancar" };
 
 /* ---------- tabs ---------- */
 function setTab(t) {
@@ -98,7 +98,7 @@ document.querySelector(".seg").addEventListener("click", e => {
   const b = e.target.closest("button[data-t]");
   if (b && b.dataset.t !== state.tipo) { setTipo(b.dataset.t); msg($("msg"), ""); }
 });
-setTipo("saida");
+setTipo("entrada"); // o app sempre abre em Entrada
 
 function setMetodo(id) {
   state.metodo = id;
