@@ -12,6 +12,10 @@ const CATEGORIAS = ["Mercado", "Alimentação", "Transporte", "Moradia", "Contas
 const MET = Object.fromEntries(METODOS.map(m => [m.id, m]));
 const KEY = "caderneta.gastos.v1";
 const HINT_KEY = "caderneta.hint.fechado";
+const BACKUP_KEY = "caderneta.ultimoBackup";   // ISO do último backup gerado
+const SNOOZE_KEY = "caderneta.lembreteAdiado"; // ISO até quando o lembrete fica escondido
+const LEMBRETE_DIAS = 15;
+const ADIAR_DIAS = 3;
 
 /* ---------- helpers ---------- */
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -208,7 +212,42 @@ function render() {
   $("storeInfo").textContent = `Os gastos ficam guardados só neste celular (${state.all.length} ${state.all.length === 1 ? "lançamento" : "lançamentos"} no total).`;
 
   renderList(docs);
+  renderReminder();
 }
+
+/* ---------- lembrete de backup ---------- */
+function getPref(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function setPref(k, v) { try { localStorage.setItem(k, v); } catch {} }
+const daysSince = iso => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+const shortDate = iso => new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short" }).format(new Date(iso)).replace(".", "");
+
+function renderReminder() {
+  const last = getPref(BACKUP_KEY);
+  $("lastBackup").textContent = last ? `Último backup: ${shortDate(last)}.` : "Nenhum backup feito ainda.";
+
+  // só lembra se há gastos que ainda não estão em nenhum backup
+  const pendentes = state.all.filter(d => !last || (d.criadoEm || "") > last);
+  if (!pendentes.length) { $("remind").hidden = true; return; }
+
+  // conta a partir do último backup, ou do primeiro gasto sem backup
+  const desde = last || pendentes.reduce((min, d) => (d.criadoEm && d.criadoEm < min ? d.criadoEm : min), new Date().toISOString());
+  const dias = daysSince(desde);
+  const adiado = getPref(SNOOZE_KEY);
+  const show = dias >= LEMBRETE_DIAS && !(adiado && adiado > new Date().toISOString());
+  $("remind").hidden = !show;
+  if (!show) return;
+
+  const n = pendentes.length, gastos = `${n} ${n === 1 ? "gasto" : "gastos"}`;
+  $("remindText").innerHTML = last
+    ? `Seu último backup foi há ${dias} dias.<small>${gastos} ainda não ${n === 1 ? "está salvo" : "estão salvos"} fora do celular.</small>`
+    : `Você ainda não fez nenhum backup.<small>Se o app for apagado, ${n === 1 ? "o gasto lançado se perde" : `os ${gastos} lançados se perdem`}.</small>`;
+}
+
+$("remindBackup").addEventListener("click", () => doBackup($("msg")));
+$("remindLater").addEventListener("click", () => {
+  setPref(SNOOZE_KEY, new Date(Date.now() + ADIAR_DIAS * 86400000).toISOString());
+  $("remind").hidden = true;
+});
 
 function niceStep(max) {
   const raw = max / 3, mag = Math.pow(10, Math.floor(Math.log10(raw)));
@@ -299,36 +338,162 @@ $("exportCsv").addEventListener("click", async () => {
   if (r !== "cancelled") msg($("dataMsg"), "Planilha gerada. Abre no Excel, Numbers ou Google Planilhas.");
 });
 
-$("backup").addEventListener("click", async () => {
-  if (!state.all.length) return msg($("dataMsg"), "Ainda não há gastos para guardar.", true);
-  const payload = JSON.stringify({ app: "caderneta", versao: 1, geradoEm: new Date().toISOString(), gastos: state.all });
-  const r = await shareFile(`caderneta-backup-${todayISO()}.json`, payload, "application/json");
-  if (r !== "cancelled") msg($("dataMsg"), "Backup gerado. Salve em Arquivos, iCloud ou mande para você mesmo.");
+/* ---------- criptografia do backup (AES-GCM 256, chave derivada da senha com PBKDF2) ---------- */
+const PBKDF2_ITER = 310000;
+const enc = new TextEncoder(), dec = new TextDecoder();
+function toB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+const fromB64 = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+async function deriveKey(senha, salt, iter) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(senha), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function encryptBackup(obj, senha) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(senha, salt, PBKDF2_ITER);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(obj))));
+  return {
+    app: "caderneta", formato: "protegido", versao: 2, geradoEm: obj.geradoEm,
+    kdf: { alg: "PBKDF2", hash: "SHA-256", iter: PBKDF2_ITER, salt: toB64(salt) },
+    cifra: { alg: "AES-GCM", iv: toB64(iv) },
+    dados: toB64(ct),
+  };
+}
+async function decryptBackup(file, senha) {
+  const key = await deriveKey(senha, fromB64(file.kdf.salt), file.kdf.iter);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(file.cifra.iv) }, key, fromB64(file.dados));
+  return JSON.parse(dec.decode(pt));
+}
+
+/* ---------- folha de senha ---------- */
+// mode "criar": pede senha + confirmação; "abrir": só a senha.
+// onSubmit(senha) faz o trabalho; devolve texto de erro para manter a folha aberta, ou nada para fechar.
+let pwHandler = null;
+function openPwSheet({ mode, onSubmit }) {
+  const criar = mode === "criar";
+  $("pwTitle").textContent = criar ? "Proteger backup" : "Backup protegido";
+  $("pwDesc").textContent = criar
+    ? "Escolha uma senha. Ela vai ser pedida para restaurar este backup."
+    : "Digite a senha usada quando este backup foi feito.";
+  $("pwDesc").className = "";
+  $("pwFields").hidden = false;
+  $("pw2Wrap").hidden = !criar;
+  $("pw1").setAttribute("autocomplete", criar ? "new-password" : "current-password");
+  $("pw1").value = ""; $("pw2").value = "";
+  $("pwOk").textContent = criar ? "Proteger" : "Restaurar";
+  $("pwOk").disabled = false;
+  msg($("pwMsg"), criar ? "Se esquecer a senha, não tem como abrir o backup. Anote num lugar seguro." : "");
+  pwHandler = { criar, onSubmit };
+  $("pwSheet").hidden = false;
+  setTimeout(() => $("pw1").focus(), 50);
+}
+function closePwSheet() { $("pwSheet").hidden = true; pwHandler = null; }
+$("pwCancel").addEventListener("click", closePwSheet);
+$("pwSheet").addEventListener("click", e => { if (e.target === $("pwSheet")) closePwSheet(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("pwSheet").hidden) closePwSheet(); });
+
+$("pwForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!pwHandler) return;
+  // segundo passo da criação: o botão já é "Salvar arquivo"
+  if (pwHandler.pronto) return pwHandler.pronto();
+  const s1 = $("pw1").value, s2 = $("pw2").value;
+  if (pwHandler.criar) {
+    if (s1.length < 6) return msg($("pwMsg"), "Use pelo menos 6 caracteres.", true);
+    if (s1 !== s2) return msg($("pwMsg"), "As duas senhas não estão iguais.", true);
+  } else if (!s1) return msg($("pwMsg"), "Digite a senha do backup.", true);
+  $("pwOk").disabled = true;
+  $("pwOk").textContent = pwHandler.criar ? "Protegendo…" : "Abrindo…";
+  const err = await pwHandler.onSubmit(s1);
+  if (err) {
+    msg($("pwMsg"), err, true);
+    $("pwOk").disabled = false;
+    $("pwOk").textContent = pwHandler.criar ? "Proteger" : "Restaurar";
+  }
 });
+
+/* ---------- backup ---------- */
+function doBackup(msgEl) {
+  if (!state.all.length) return msg(msgEl, "Ainda não há gastos para guardar.", true);
+  if (!window.crypto || !crypto.subtle) return msg(msgEl, "Este navegador não consegue proteger o backup. Abra o app pelo ícone instalado.", true);
+  openPwSheet({
+    mode: "criar",
+    onSubmit: async senha => {
+      const agora = new Date().toISOString();
+      let file;
+      try { file = await encryptBackup({ app: "caderneta", versao: 1, geradoEm: agora, gastos: state.all }, senha); }
+      catch { return "Não foi possível proteger o backup. Tente de novo."; }
+      // O compartilhamento precisa partir de um toque direto, então o arquivo
+      // fica pronto e o próximo toque em "Salvar arquivo" abre o menu.
+      const payload = JSON.stringify(file);
+      $("pwTitle").textContent = "Backup pronto";
+      $("pwDesc").textContent = "Toque em Salvar arquivo e escolha onde guardar: Arquivos, iCloud Drive, Google Drive…";
+      $("pwFields").hidden = true;
+      msg($("pwMsg"), "");
+      $("pwOk").disabled = false;
+      $("pwOk").textContent = "Salvar arquivo";
+      pwHandler.pronto = async () => {
+        const r = await shareFile(`caderneta-backup-${todayISO()}.json`, payload, "application/json");
+        if (r === "cancelled") return;
+        setPref(BACKUP_KEY, agora);
+        try { localStorage.removeItem(SNOOZE_KEY); } catch {}
+        closePwSheet();
+        msg(msgEl, "Backup protegido gerado. Guarde a senha junto com você, não junto com o arquivo.");
+        renderReminder();
+      };
+    },
+  });
+}
+$("backup").addEventListener("click", () => doBackup($("dataMsg")));
+
+/* ---------- restaurar ---------- */
+function mergeBackup(list) {
+  if (!Array.isArray(list)) return "Esse arquivo não é um backup da Caderneta. Escolha o .json gerado em “Fazer backup”.";
+  const valid = list.filter(d => d && typeof d.id === "string" && Number.isFinite(d.valor) && /^\d{4}-\d{2}-\d{2}$/.test(d.data))
+    .map(d => ({ ...d, mes: monthOf(d.data) }));
+  if (!valid.length) return "Esse backup não tem nenhum gasto.";
+  const byId = new Map(state.all.map(d => [d.id, d]));
+  let novos = 0;
+  valid.forEach(d => { if (!byId.has(d.id)) novos++; byId.set(d.id, d); });
+  const before = state.all;
+  state.all = [...byId.values()];
+  if (!persist()) { state.all = before; return "Não foi possível salvar o backup no celular."; }
+  render();
+  msg($("dataMsg"), `Backup restaurado: ${novos} ${novos === 1 ? "lançamento novo" : "lançamentos novos"}, ${valid.length - novos} já existiam.`);
+}
 
 $("restore").addEventListener("click", () => $("restoreFile").click());
 $("restoreFile").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0];
   e.target.value = "";
   if (!f) return;
-  try {
-    const parsed = JSON.parse(await f.text());
-    const list = Array.isArray(parsed) ? parsed : parsed.gastos;
-    if (!Array.isArray(list)) throw new Error();
-    const valid = list.filter(d => d && typeof d.id === "string" && Number.isFinite(d.valor) && /^\d{4}-\d{2}-\d{2}$/.test(d.data))
-      .map(d => ({ ...d, mes: monthOf(d.data) }));
-    if (!valid.length) throw new Error();
-    const byId = new Map(state.all.map(d => [d.id, d]));
-    let novos = 0;
-    valid.forEach(d => { if (!byId.has(d.id)) novos++; byId.set(d.id, d); });
-    const before = state.all;
-    state.all = [...byId.values()];
-    if (!persist()) { state.all = before; return msg($("dataMsg"), "Não foi possível salvar o backup no celular.", true); }
-    render();
-    msg($("dataMsg"), `Backup restaurado: ${novos} ${novos === 1 ? "lançamento novo" : "lançamentos novos"}, ${valid.length - novos} já existiam.`);
-  } catch {
-    msg($("dataMsg"), "Esse arquivo não é um backup da Caderneta. Escolha o .json gerado em “Fazer backup”.", true);
+  let parsed;
+  try { parsed = JSON.parse(await f.text()); }
+  catch { return msg($("dataMsg"), "Esse arquivo não é um backup da Caderneta. Escolha o .json gerado em “Fazer backup”.", true); }
+
+  if (parsed && parsed.formato === "protegido") {
+    if (!window.crypto || !crypto.subtle) return msg($("dataMsg"), "Este navegador não consegue abrir backups protegidos. Abra o app pelo ícone instalado.", true);
+    openPwSheet({
+      mode: "abrir",
+      onSubmit: async senha => {
+        let conteudo;
+        try { conteudo = await decryptBackup(parsed, senha); }
+        catch { return "Senha errada. Confira maiúsculas e minúsculas e tente de novo."; }
+        const err = mergeBackup(conteudo && conteudo.gastos);
+        if (err) return err;
+        closePwSheet();
+      },
+    });
+    return;
   }
+  // backups antigos, de antes da proteção por senha
+  const err = mergeBackup(Array.isArray(parsed) ? parsed : parsed && parsed.gastos);
+  if (err) msg($("dataMsg"), err, true);
 });
 
 render();

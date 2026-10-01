@@ -84,6 +84,14 @@ main { max-width: 560px; margin: 0 auto; padding-inline: max(16px, env(safe-area
 .hint svg { width: 16px; height: 16px; vertical-align: -2px; }
 .hint button { border: 0; background: transparent; color: var(--ink-2); font-size: 20px; line-height: 1; padding: 0 4px; cursor: pointer; }
 
+/* backup reminder */
+.remind { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line-2); border-left: 4px solid var(--m-dinheiro); border-radius: 12px; background: var(--surface); }
+.remind p { margin: 0; font-size: 15px; }
+.remind p small { display: block; color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+.remind-actions { display: flex; gap: 8px; }
+.remind .btn { height: 42px; font-size: 15px; }
+.remind .btn.ghost { flex: none; }
+
 /* form */
 .entry { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 16px; display: grid; gap: 16px; }
 .entry h2 { font-family: var(--f-display); font-size: 18px; margin: 0; font-weight: 700; }
@@ -171,6 +179,15 @@ table.mt tr.zero { color: var(--ink-3); }
 .data-box .btns { display: grid; gap: 8px; }
 .data-box .btn { width: 100%; }
 
+/* password sheet */
+.sheet-bg { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .45); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 560px; background: var(--surface); border-radius: 18px 18px 0 0; display: grid; gap: 14px;
+  padding: 20px max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.sheet h2 { font-family: var(--f-display); font-size: 19px; margin: 0; }
+.sheet p { margin: 0; font-size: 15px; color: var(--ink-2); }
+.sheet p.warn { color: var(--ink); background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+@media (min-width: 600px) { .sheet-bg { align-items: center; } .sheet { border-radius: 18px; } }
+
 /* tab bar */
 nav.tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
@@ -207,6 +224,14 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
       <span id="hintWhere"></span> e depois em <b>Adicionar à Tela de Início</b>.
       Instale antes de começar: o que for lançado aqui no navegador não passa para o app.</span>
     <button type="button" id="hideHint" aria-label="Fechar aviso">×</button>
+  </div>
+
+  <div class="remind" id="remind" hidden role="status">
+    <p id="remindText">Faça um backup dos seus gastos.</p>
+    <div class="remind-actions">
+      <button type="button" class="btn primary" id="remindBackup">Fazer backup agora</button>
+      <button type="button" class="btn ghost" id="remindLater">Depois</button>
+    </div>
   </div>
 
   <!-- ============ LANÇAR ============ -->
@@ -270,7 +295,7 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
       <h3>Seus dados</h3>
       <div class="data-box">
         <p id="storeInfo">Os gastos ficam guardados só neste celular.</p>
-        <p>Faça um backup de vez em quando: se o app for apagado, os dados vão junto.</p>
+        <p>Faça um backup de vez em quando: se o app for apagado, os dados vão junto. O backup sai protegido por uma senha sua. <b id="lastBackup"></b></p>
         <div class="btns">
           <button class="btn ghost" type="button" id="exportCsv">Exportar mês para planilha</button>
           <button class="btn ghost" type="button" id="backup">Fazer backup</button>
@@ -282,6 +307,22 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
     </section>
   </div>
 </main>
+
+<div class="sheet-bg" id="pwSheet" hidden>
+  <form class="sheet" id="pwForm" autocomplete="off" novalidate role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+    <h2 id="pwTitle">Proteger backup</h2>
+    <p id="pwDesc"></p>
+    <div id="pwFields" style="display:grid;gap:12px">
+      <label class="field"><span>Senha do backup</span><input class="txt" type="password" id="pw1" autocomplete="new-password" enterkeyhint="next"></label>
+      <label class="field" id="pw2Wrap"><span>Repita a senha</span><input class="txt" type="password" id="pw2" autocomplete="new-password" enterkeyhint="done"></label>
+    </div>
+    <p class="msg" id="pwMsg" role="status"></p>
+    <div class="actions">
+      <button class="btn ghost" type="button" id="pwCancel">Cancelar</button>
+      <button class="btn primary" type="submit" id="pwOk">Continuar</button>
+    </div>
+  </form>
+</div>
 
 <nav class="tabs" role="tablist" aria-label="Seções">
   <div class="in">
