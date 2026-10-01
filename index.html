@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caderneta de Gastos</title>
+<meta name="description" content="Controle de gastos por forma de pagamento, com relatório mensal.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Caderneta">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f2f4f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121714" media="(prefers-color-scheme: dark)">
+<style>
+/* Layout: single phone column — sticky header with month switcher, two views (Lançar / Relatório), tab bar fixed at the bottom. */
+:root {
+  --bg: #f2f4f1;
+  --surface: #fbfcfa;
+  --ink: #16201b;
+  --ink-2: #4c5852;
+  --ink-3: #7d8882;
+  --line: #dde2dc;
+  --line-2: #c8cfc8;
+  --accent: #1d4a3c;
+  --accent-ink: #f4f8f5;
+  --accent-soft: #e2ece6;
+  --bar: #3e4c45;
+  --bar-soft: #c6cec8;
+  --good: #1f7a3a;
+  --bad: #b3361f;
+  --m-credito: #2a78d6;
+  --m-debito: #eb6834;
+  --m-pix: #1baf7a;
+  --m-dinheiro: #eda100;
+  --m-boleto: #e87ba4;
+  --m-vale: #008300;
+  --f-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --f-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+  --f-num: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  --tabbar-h: 58px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121714; --surface: #1a201c; --ink: #eef2ef; --ink-2: #b4beb8; --ink-3: #85908a;
+    --line: #2b332e; --line-2: #3a443e; --accent: #9fd2bd; --accent-ink: #0f1a15; --accent-soft: #22322b;
+    --bar: #b9c5be; --bar-soft: #39433d; --good: #6cc489; --bad: #f08a72;
+    --m-credito: #3987e5; --m-debito: #d95926; --m-pix: #199e70; --m-dinheiro: #c98500; --m-boleto: #d55181; --m-vale: #008300;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-family: var(--f-body); font-size: 16px; line-height: 1.45; touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; }
+
+/* header */
+header.top {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+}
+.top-in { max-width: 560px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.top h1 { font-family: var(--f-display); font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+.monthnav { display: flex; align-items: center; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.monthnav button { border: 0; background: transparent; width: 34px; height: 34px; border-radius: 50%; font-size: 20px; line-height: 1; color: var(--ink-2); cursor: pointer; }
+.monthnav button:disabled { opacity: .3; }
+.monthnav .m { min-width: 104px; text-align: center; font-weight: 600; font-size: 15px; text-transform: capitalize; }
+
+main { max-width: 560px; margin: 0 auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)); padding-block: 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px); display: grid; gap: 22px; }
+
+/* install hint */
+.hint { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 12px 14px; background: var(--accent-soft); border-radius: 12px; font-size: 14px; color: var(--ink); }
+.hint svg { width: 16px; height: 16px; vertical-align: -2px; }
+.hint button { border: 0; background: transparent; color: var(--ink-2); font-size: 20px; line-height: 1; padding: 0 4px; cursor: pointer; }
+
+/* form */
+.entry { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 16px; display: grid; gap: 16px; }
+.entry h2 { font-family: var(--f-display); font-size: 18px; margin: 0; font-weight: 700; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field > span { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.amount { display: flex; align-items: baseline; gap: 8px; border-bottom: 2px solid var(--ink); padding-bottom: 4px; }
+.amount b { font-family: var(--f-num); color: var(--ink-3); font-weight: 400; font-size: 20px; }
+.amount input { border: 0; background: transparent; font-family: var(--f-num); font-size: 36px; width: 100%; min-width: 0; padding: 0; font-variant-numeric: tabular-nums; border-radius: 0; }
+.amount input:focus { outline: none; }
+.amount:focus-within { border-color: var(--accent); }
+.methods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.methods button { display: flex; align-items: center; gap: 7px; padding: 11px 10px; border: 1px solid var(--line-2); border-radius: 10px; background: transparent; font-size: 15px; font-weight: 500; text-align: left; white-space: nowrap; cursor: pointer; }
+.methods button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.dot { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--c); }
+.methods button[aria-pressed="true"] .dot { box-shadow: 0 0 0 2px var(--bg); }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+input.txt, select.txt { width: 100%; min-width: 0; height: 44px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg); font-size: 16px; -webkit-appearance: none; appearance: none; }
+select.txt { background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 16px) 19px, calc(100% - 11px) 19px; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+input[type="date"].txt { display: flex; align-items: center; }
+.actions { display: flex; gap: 8px; }
+.btn { border: 0; border-radius: 12px; height: 48px; padding: 0 16px; font-weight: 600; cursor: pointer; font-size: 16px; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); flex: 1; }
+.btn.primary:disabled { opacity: .5; }
+.btn.ghost { background: transparent; border: 1px solid var(--line-2); }
+.msg { font-size: 14px; min-height: 1.4em; margin: -4px 0 0; color: var(--ink-2); }
+.msg.err { color: var(--bad); }
+
+/* report */
+.headline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; }
+.stat { display: grid; gap: 2px; min-width: 0; }
+.stat .v { font-family: var(--f-num); font-size: 19px; font-variant-numeric: tabular-nums; }
+.stat.big { grid-column: 1 / -1; }
+.stat.big .v { font-family: var(--f-display); font-size: 44px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.stat .sub { font-size: 13px; color: var(--ink-3); }
+.delta.up { color: var(--bad); } .delta.down { color: var(--good); }
+
+section.block { display: grid; gap: 12px; min-width: 0; }
+section.block h3 { font-family: var(--f-display); font-size: 17px; font-weight: 700; margin: 0; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+section.block h3 small { font-family: var(--f-body); font-weight: 400; font-size: 13px; color: var(--ink-3); }
+
+.stack { display: flex; height: 18px; gap: 2px; }
+.stack div { background: var(--c); min-width: 3px; }
+.stack div:first-child { border-radius: 4px 0 0 4px; }
+.stack div:last-child { border-radius: 0 4px 4px 0; }
+.stack div:only-child { border-radius: 4px; }
+.stack.empty { background: var(--bar-soft); border-radius: 4px; opacity: .5; }
+table.mt { width: 100%; border-collapse: collapse; font-size: 15px; }
+table.mt td { padding: 9px 0; border-bottom: 1px solid var(--line); }
+table.mt td:first-child { display: flex; align-items: center; gap: 9px; }
+table.mt td.r { text-align: right; padding-left: 10px; white-space: nowrap; }
+table.mt td.q { color: var(--ink-3); font-size: 13px; }
+table.mt tr.zero { color: var(--ink-3); }
+
+.cats { display: grid; gap: 10px; }
+.cat { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 14px; }
+.cat > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat .track { height: 10px; }
+.cat .fill { height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+
+.readout { font-size: 14px; color: var(--ink-2); min-height: 1.5em; }
+.plot { position: relative; height: 130px; border-bottom: 1px solid var(--line-2); display: flex; align-items: end; gap: 2px; }
+.gridline { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); pointer-events: none; }
+.gridline span { position: absolute; right: 0; top: -17px; font-size: 11px; color: var(--ink-3); font-family: var(--f-num); background: var(--bg); padding-left: 4px; }
+.col { flex: 1; height: 100%; display: flex; align-items: end; min-width: 0; cursor: pointer; }
+.col i { display: block; width: 100%; background: var(--bar); border-radius: 3px 3px 0 0; }
+.col.on i { background: var(--accent); }
+.axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-3); font-family: var(--f-num); margin-top: -6px; }
+
+.list { display: grid; gap: 16px; }
+.day h4 { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--ink-2); display: flex; justify-content: space-between; }
+.day h4 span:first-child::first-letter { text-transform: uppercase; }
+.item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 4px; border-top: 1px solid var(--line); cursor: pointer; }
+.item.editing { background: var(--accent-soft); border-radius: 8px; }
+.item .desc { min-width: 0; }
+.item .desc b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .desc small { color: var(--ink-3); font-size: 13px; }
+.item .del { border: 0; background: transparent; color: var(--ink-3); min-width: 34px; height: 34px; border-radius: 8px; font-size: 20px; cursor: pointer; }
+.item .del.confirm { padding: 0 10px; color: #fff; background: var(--bad); font-size: 14px; font-weight: 600; }
+
+.empty-state { padding: 22px 18px; border: 1px dashed var(--line-2); border-radius: 14px; color: var(--ink-2); font-size: 15px; }
+.empty-state strong { display: block; font-family: var(--f-display); font-size: 17px; color: var(--ink); margin-bottom: 4px; }
+
+.data-box { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.data-box p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.data-box .btns { display: grid; gap: 8px; }
+.data-box .btn { width: 100%; }
+
+/* tab bar */
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; justify-content: center;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+  padding: 0 0 env(safe-area-inset-bottom, 0px);
+}
+nav.tabs .in { display: grid; grid-template-columns: 1fr 1fr; width: 100%; max-width: 560px; }
+nav.tabs button { height: var(--tabbar-h); border: 0; background: transparent; display: grid; place-items: center; align-content: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--ink-3); cursor: pointer; }
+nav.tabs svg { width: 24px; height: 24px; }
+nav.tabs button[aria-selected="true"] { color: var(--accent); }
+
+@media (prefers-reduced-motion: no-preference) { .col i, .cat .fill, .stack div { transition: height .3s ease, width .3s ease, flex-basis .3s ease; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <h1>Caderneta</h1>
+    <div class="monthnav" role="group" aria-label="Mês">
+      <button id="prev" type="button" aria-label="Mês anterior">‹</button>
+      <span class="m" id="monthLabel">—</span>
+      <button id="next" type="button" aria-label="Próximo mês">›</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="hint" id="installHint" hidden>
+    <span>Para instalar no iPhone: toque em <b>Compartilhar</b>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>
+      <span id="hintWhere"></span> e depois em <b>Adicionar à Tela de Início</b>.
+      Instale antes de começar: o que for lançado aqui no navegador não passa para o app.</span>
+    <button type="button" id="hideHint" aria-label="Fechar aviso">×</button>
+  </div>
+
+  <!-- ============ LANÇAR ============ -->
+  <div id="view-lancar" class="view" style="display:grid;gap:22px">
+    <form class="entry" id="form" autocomplete="off" novalidate>
+      <h2 id="formTitle">Novo gasto</h2>
+      <label class="field">
+        <span>Valor</span>
+        <div class="amount"><b>R$</b><input id="valor" inputmode="numeric" enterkeyhint="done" placeholder="0,00" aria-label="Valor em reais"></div>
+      </label>
+      <div class="field">
+        <span id="metLbl">Pagamento</span>
+        <div class="methods" id="methods" role="group" aria-labelledby="metLbl"></div>
+      </div>
+      <div class="row2">
+        <label class="field"><span>Categoria</span><select class="txt" id="categoria"></select></label>
+        <label class="field"><span>Data</span><input class="txt" type="date" id="data"></label>
+      </div>
+      <label class="field"><span>Descrição <small style="font-weight:400;color:var(--ink-3)">(opcional)</small></span><input class="txt" id="descricao" maxlength="80" placeholder="ex.: Mercado Extra" enterkeyhint="done"></label>
+      <div class="actions">
+        <button class="btn ghost" type="button" id="cancel" hidden>Cancelar</button>
+        <button class="btn primary" type="submit" id="submit">Lançar gasto</button>
+      </div>
+      <p class="msg" id="msg" role="status"></p>
+    </form>
+
+    <section class="block">
+      <h3><span id="listTitle">Lançamentos</span> <small id="listTotal"></small></h3>
+      <div class="list" id="list"></div>
+    </section>
+  </div>
+
+  <!-- ============ RELATÓRIO ============ -->
+  <div id="view-relatorio" class="view" hidden style="display:grid;gap:26px">
+    <div class="headline">
+      <div class="stat big"><span class="label" id="totLbl">Total do mês</span><span class="v" id="total">R$ 0,00</span></div>
+      <div class="stat"><span class="label">Lançamentos</span><span class="v" id="count">0</span></div>
+      <div class="stat"><span class="label">Média por dia</span><span class="v" id="avg">—</span></div>
+      <div class="stat" style="grid-column:1/-1"><span class="label" id="cmpLbl">Mês anterior</span><span class="v delta" id="cmp">—</span><span class="sub" id="cmpSub"></span></div>
+    </div>
+
+    <section class="block">
+      <h3>Por forma de pagamento <small id="cardNote"></small></h3>
+      <div class="stack" id="stack" aria-hidden="true"></div>
+      <table class="mt"><tbody id="methodRows"></tbody></table>
+    </section>
+
+    <section class="block">
+      <h3>Por categoria</h3>
+      <div class="cats" id="cats"></div>
+    </section>
+
+    <section class="block">
+      <h3>Dia a dia</h3>
+      <div class="readout" id="readout">Toque numa barra para ver o dia.</div>
+      <div class="plot" id="plot"></div>
+      <div class="axis" id="axis"></div>
+    </section>
+
+    <section class="block">
+      <h3>Seus dados</h3>
+      <div class="data-box">
+        <p id="storeInfo">Os gastos ficam guardados só neste celular.</p>
+        <p>Faça um backup de vez em quando: se o app for apagado, os dados vão junto.</p>
+        <div class="btns">
+          <button class="btn ghost" type="button" id="exportCsv">Exportar mês para planilha</button>
+          <button class="btn ghost" type="button" id="backup">Fazer backup</button>
+          <button class="btn ghost" type="button" id="restore">Restaurar backup</button>
+          <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+        </div>
+        <p class="msg" id="dataMsg" role="status"></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<nav class="tabs" role="tablist" aria-label="Seções">
+  <div class="in">
+    <button type="button" role="tab" id="tab-lancar" aria-selected="true" aria-controls="view-lancar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+      Lançar
+    </button>
+    <button type="button" role="tab" id="tab-relatorio" aria-selected="false" aria-controls="view-relatorio">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/></svg>
+      Relatório
+    </button>
+  </div>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>
