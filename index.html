@@ -92,6 +92,29 @@ main { max-width: 560px; margin: 0 auto; padding-inline: max(16px, env(safe-area
 .remind .btn { height: 42px; font-size: 15px; }
 .remind .btn.ghost { flex: none; }
 
+/* gasto / entrada toggle */
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+.seg button { height: 38px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 15px; color: var(--ink-2); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button[data-t="entrada"][aria-pressed="true"] { background: var(--good); color: var(--accent-ink); }
+.amount.in { border-color: var(--good); }
+.amount.in input { color: var(--good); }
+
+/* balanço */
+.bal { display: grid; gap: 8px; }
+.bal-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 15px; color: var(--ink-2); }
+.bal-row .num { color: var(--ink); }
+.bal-row.in .num { color: var(--good); }
+.bal-row.total { padding-top: 8px; border-top: 1px solid var(--line); color: var(--ink); font-weight: 600; }
+.bal-row.total .num { font-family: var(--f-display); font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+.bal-row.total.neg .num { color: var(--bad); }
+.meter { height: 10px; background: var(--bar-soft); border-radius: 5px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--bar); border-radius: 5px; }
+.meter.over i { background: var(--bad); }
+.bal-note { font-size: 13px; color: var(--ink-3); margin: 0; }
+.item .num.in { color: var(--good); }
+.dot.in { width: 16px; height: 16px; margin: 0 -3px; border-radius: 50%; background: var(--good); color: var(--accent-ink); display: grid; place-items: center; font-size: 13px; font-weight: 700; line-height: 1; }
+
 /* form */
 .entry { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 16px; display: grid; gap: 16px; }
 .entry h2 { font-family: var(--f-display); font-size: 18px; margin: 0; font-weight: 700; }
@@ -237,12 +260,16 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
   <!-- ============ LANÇAR ============ -->
   <div id="view-lancar" class="view" style="display:grid;gap:22px">
     <form class="entry" id="form" autocomplete="off" novalidate>
+      <div class="seg" role="group" aria-label="Tipo de lançamento">
+        <button type="button" data-t="saida" aria-pressed="true">Gasto</button>
+        <button type="button" data-t="entrada" aria-pressed="false">Entrada</button>
+      </div>
       <h2 id="formTitle">Novo gasto</h2>
       <label class="field">
-        <span>Valor</span>
-        <div class="amount"><b>R$</b><input id="valor" inputmode="numeric" enterkeyhint="done" placeholder="0,00" aria-label="Valor em reais"></div>
+        <span id="valorLbl">Valor</span>
+        <div class="amount" id="amountBox"><b>R$</b><input id="valor" inputmode="numeric" enterkeyhint="done" placeholder="0,00" aria-label="Valor em reais"></div>
       </label>
-      <div class="field">
+      <div class="field" id="metField">
         <span id="metLbl">Pagamento</span>
         <div class="methods" id="methods" role="group" aria-labelledby="metLbl"></div>
       </div>
@@ -266,6 +293,11 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
 
   <!-- ============ RELATÓRIO ============ -->
   <div id="view-relatorio" class="view" hidden style="display:grid;gap:26px">
+    <section class="block" id="balanco">
+      <h3>Balanço do mês</h3>
+      <div id="balBody"></div>
+    </section>
+
     <div class="headline">
       <div class="stat big"><span class="label" id="totLbl">Total do mês</span><span class="v" id="total">R$ 0,00</span></div>
       <div class="stat"><span class="label">Lançamentos</span><span class="v" id="count">0</span></div>

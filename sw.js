@@ -1,6 +1,6 @@
 // Guarda o app no celular para abrir sem internet.
 // Ao publicar uma versão nova, aumente o número em CACHE.
-const CACHE = "caderneta-v3";
+const CACHE = "caderneta-v5";
 const ASSETS = [
   "./",
   "./index.html",

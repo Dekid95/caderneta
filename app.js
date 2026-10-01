@@ -9,7 +9,13 @@ const METODOS = [
   { id: "vale", nome: "VR/VA" },
 ];
 const CATEGORIAS = ["Mercado", "Alimentação", "Transporte", "Moradia", "Contas", "Saúde", "Lazer", "Compras", "Educação", "Assinaturas", "Outros"];
+const CATEG_ENTRADA = ["Pagamento", "Avulso", "Vendas", "Reembolso", "Rendimentos", "Presente", "Extra"];
+// nomes antigos de categorias de entrada → nomes atuais
+const RENOMEAR_ENTRADA = { "Salário": "Pagamento", "Freela / Extra": "Avulso", "Outros": "Extra" };
+const normalizar = d => (d && d.tipo === "entrada" && RENOMEAR_ENTRADA[d.categoria] ? { ...d, categoria: RENOMEAR_ENTRADA[d.categoria] } : d);
 const MET = Object.fromEntries(METODOS.map(m => [m.id, m]));
+// lançamentos antigos não têm "tipo": todos são gastos
+const isIn = d => d.tipo === "entrada";
 const KEY = "caderneta.gastos.v1";
 const HINT_KEY = "caderneta.hint.fechado";
 const BACKUP_KEY = "caderneta.ultimoBackup";   // ISO do último backup gerado
@@ -34,14 +40,14 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toStri
 
 /* ---------- storage (só no aparelho) ---------- */
 function load() {
-  try { const v = JSON.parse(localStorage.getItem(KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
+  try { const v = JSON.parse(localStorage.getItem(KEY)); return Array.isArray(v) ? v.map(normalizar) : []; } catch { return []; }
 }
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state.all)); return true; } catch { return false; }
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-const state = { all: load(), mes: monthOf(todayISO()), metodo: "pix", editing: null, armedDelete: null, tab: "lancar" };
+const state = { all: load(), mes: monthOf(todayISO()), metodo: "pix", tipo: "saida", editing: null, armedDelete: null, tab: "lancar" };
 
 /* ---------- tabs ---------- */
 function setTab(t) {
@@ -70,8 +76,29 @@ $("tab-relatorio").addEventListener("click", () => setTab("relatorio"));
 /* ---------- form ---------- */
 $("methods").innerHTML = METODOS.map(m =>
   `<button type="button" data-m="${m.id}" aria-pressed="false"><span class="dot" style="--c:var(--m-${m.id})"></span>${m.nome}</button>`).join("");
-$("categoria").innerHTML = CATEGORIAS.map(c => `<option>${c}</option>`).join("");
 $("data").value = todayISO();
+
+function formLabels() {
+  const ent = state.tipo === "entrada";
+  $("formTitle").textContent = state.editing ? (ent ? "Editar entrada" : "Editar gasto") : (ent ? "Nova entrada" : "Novo gasto");
+  $("submit").textContent = state.editing ? "Salvar alteração" : (ent ? "Lançar entrada" : "Lançar gasto");
+  $("valorLbl").textContent = ent ? "Valor recebido" : "Valor";
+}
+function setTipo(t) {
+  state.tipo = t;
+  const ent = t === "entrada";
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
+  $("categoria").innerHTML = (ent ? CATEG_ENTRADA : CATEGORIAS).map(c => `<option>${c}</option>`).join("");
+  $("metField").hidden = ent;
+  $("amountBox").classList.toggle("in", ent);
+  $("descricao").placeholder = ent ? "ex.: Pagamento de outubro" : "ex.: Mercado Extra";
+  formLabels();
+}
+document.querySelector(".seg").addEventListener("click", e => {
+  const b = e.target.closest("button[data-t]");
+  if (b && b.dataset.t !== state.tipo) { setTipo(b.dataset.t); msg($("msg"), ""); }
+});
+setTipo("saida");
 
 function setMetodo(id) {
   state.metodo = id;
@@ -92,21 +119,19 @@ function msg(el, text, err) { el.textContent = text; el.className = "msg" + (err
 function resetForm() {
   state.editing = null; cents = 0; paintValor();
   $("descricao").value = "";
-  $("formTitle").textContent = "Novo gasto";
-  $("submit").textContent = "Lançar gasto";
   $("cancel").hidden = true;
+  formLabels();
 }
 $("cancel").addEventListener("click", () => { resetForm(); msg($("msg"), ""); render(); });
 
 function startEdit(doc) {
   state.editing = doc.id;
+  setTipo(isIn(doc) ? "entrada" : "saida");
   cents = doc.valor; paintValor();
-  setMetodo(doc.metodo);
+  if (!isIn(doc)) setMetodo(doc.metodo);
   $("categoria").value = doc.categoria;
   $("data").value = doc.data;
   $("descricao").value = doc.descricao || "";
-  $("formTitle").textContent = "Editar gasto";
-  $("submit").textContent = "Salvar alteração";
   $("cancel").hidden = false;
   msg($("msg"), "");
   render();
@@ -116,22 +141,28 @@ function startEdit(doc) {
 $("form").addEventListener("submit", e => {
   e.preventDefault();
   const m = $("msg");
-  if (!cents) return msg(m, "Digite o valor do gasto.", true);
+  const ent = state.tipo === "entrada";
+  if (!cents) return msg(m, ent ? "Digite o valor recebido." : "Digite o valor do gasto.", true);
   const data = $("data").value;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return msg(m, "Escolha a data do gasto.", true);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return msg(m, ent ? "Escolha a data em que recebeu." : "Escolha a data do gasto.", true);
   const body = {
-    valor: cents, metodo: state.metodo, categoria: $("categoria").value,
+    tipo: state.tipo, valor: cents, categoria: $("categoria").value,
     descricao: $("descricao").value.trim(), data, mes: monthOf(data),
   };
+  if (!ent) body.metodo = state.metodo;
   const before = state.all.slice();
   if (state.editing) {
     const i = state.all.findIndex(d => d.id === state.editing);
-    if (i >= 0) state.all[i] = { ...state.all[i], ...body };
+    if (i >= 0) {
+      const { metodo, ...rest } = state.all[i];   // entrada não guarda forma de pagamento
+      state.all[i] = { ...(ent ? rest : state.all[i]), ...body };
+    }
   } else {
     state.all.push({ id: newId(), ...body, criadoEm: new Date().toISOString() });
   }
   if (!persist()) { state.all = before; return msg(m, "Não foi possível salvar: o armazenamento do celular está cheio ou bloqueado.", true); }
-  msg(m, `${state.editing ? "Alterado" : "Lançado"}: ${fmt(cents)} no ${MET[body.metodo].nome}.`);
+  const verbo = state.editing ? "Alterado" : "Lançado";
+  msg(m, ent ? `${verbo}: entrada de ${fmt(cents)} (${body.categoria}).` : `${verbo}: ${fmt(cents)} no ${MET[body.metodo].nome}.`);
   resetForm();
   $("data").value = data;
   state.mes = body.mes;
@@ -149,9 +180,13 @@ function render() {
   const isCurrent = cur === monthOf(today);
   $("monthLabel").textContent = monthName(cur);
   $("next").disabled = cur >= monthOf(today);
-  const docs = state.all.filter(d => d.mes === cur);
-  const prevDocs = state.all.filter(d => d.mes === prev);
+  const doMes = state.all.filter(d => d.mes === cur);
+  const docs = doMes.filter(d => !isIn(d));          // gastos: base de todo o relatório
+  const entradas = doMes.filter(isIn);
+  const prevDocs = state.all.filter(d => d.mes === prev && !isIn(d));
   const total = sum(docs);
+
+  renderBalanco(sum(entradas), total, entradas);
 
   // resumo
   $("totLbl").textContent = isCurrent ? "Gasto até agora" : "Total do mês";
@@ -211,8 +246,33 @@ function render() {
   // dados
   $("storeInfo").textContent = `Os gastos ficam guardados só neste celular (${state.all.length} ${state.all.length === 1 ? "lançamento" : "lançamentos"} no total).`;
 
-  renderList(docs);
+  renderList(doMes);
   renderReminder();
+}
+
+/* ---------- balanço: entradas x gastos ---------- */
+function renderBalanco(recebido, gasto, entradas) {
+  const body = $("balBody");
+  if (!recebido) {
+    body.innerHTML = `<p class="bal-note">Lance o que recebeu no mês (pagamento, extras…) em <b>Lançar → Entrada</b> para ver quanto sobrou.</p>`;
+    return;
+  }
+  const saldo = recebido - gasto;
+  const pct = Math.round(gasto / recebido * 100);
+  // agrupa as entradas por categoria quando há mais de uma
+  const byC = CATEG_ENTRADA.map(c => ({ c, v: sum(entradas.filter(d => d.categoria === c)) })).filter(x => x.v);
+  const detalhe = byC.length > 1 ? byC.map(x => `${x.c} ${fmt(x.v)}`).join(" · ") : "";
+  body.innerHTML = `
+    <div class="bal">
+      <div class="bal-row in"><span>Recebido</span><span class="num">+ ${fmt(recebido)}</span></div>
+      ${detalhe ? `<p class="bal-note" style="margin-top:-4px">${esc(detalhe)}</p>` : ""}
+      <div class="bal-row"><span>Gasto</span><span class="num">− ${fmt(gasto)}</span></div>
+      <div class="bal-row total${saldo < 0 ? " neg" : ""}"><span>${saldo < 0 ? "Faltou" : "Sobrou"}</span><span class="num">${fmt(Math.abs(saldo))}</span></div>
+      <div class="meter${saldo < 0 ? " over" : ""}" aria-hidden="true"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <p class="bal-note">${saldo < 0
+        ? `Os gastos passaram ${fmt(-saldo)} do que entrou no mês.`
+        : `Você gastou ${pct}% do que recebeu.`}</p>
+    </div>`;
 }
 
 /* ---------- lembrete de backup ---------- */
@@ -237,10 +297,10 @@ function renderReminder() {
   $("remind").hidden = !show;
   if (!show) return;
 
-  const n = pendentes.length, gastos = `${n} ${n === 1 ? "gasto" : "gastos"}`;
+  const n = pendentes.length, itens = `${n} ${n === 1 ? "lançamento" : "lançamentos"}`;
   $("remindText").innerHTML = last
-    ? `Seu último backup foi há ${dias} dias.<small>${gastos} ainda não ${n === 1 ? "está salvo" : "estão salvos"} fora do celular.</small>`
-    : `Você ainda não fez nenhum backup.<small>Se o app for apagado, ${n === 1 ? "o gasto lançado se perde" : `os ${gastos} lançados se perdem`}.</small>`;
+    ? `Seu último backup foi há ${dias} dias.<small>${itens} ainda não ${n === 1 ? "está salvo" : "estão salvos"} fora do celular.</small>`
+    : `Você ainda não fez nenhum backup.<small>Se o app for apagado, ${n === 1 ? "o lançamento feito se perde" : `os ${itens} feitos se perdem`}.</small>`;
 }
 
 $("remindBackup").addEventListener("click", () => doBackup($("msg")));
@@ -261,7 +321,7 @@ $("plot").addEventListener("click", e => {
   document.querySelectorAll("#plot .col.on").forEach(c => c.classList.remove("on"));
   if (!col) return;
   col.classList.add("on");
-  const ds = state.all.filter(d => d.data === col.dataset.iso);
+  const ds = state.all.filter(d => d.data === col.dataset.iso && !isIn(d));
   $("readout").textContent = `${dayLabel(col.dataset.iso)} · ${fmt(Number(col.dataset.v))}` + (ds.length ? ` · ${ds.length} ${ds.length === 1 ? "gasto" : "gastos"}` : "");
 });
 
@@ -269,22 +329,29 @@ $("plot").addEventListener("click", e => {
 function renderList(docs) {
   docs = docs.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || "").localeCompare(a.criadoEm || ""));
   $("listTitle").textContent = "Lançamentos de " + monthName(state.mes, { month: "long" });
-  $("listTotal").textContent = docs.length ? fmt(sum(docs)) : "";
+  const gastos = docs.filter(d => !isIn(d)), entradas = docs.filter(isIn);
+  $("listTotal").textContent = [gastos.length ? "gastos " + fmt(sum(gastos)) : "", entradas.length ? "entradas " + fmt(sum(entradas)) : ""].filter(Boolean).join(" · ");
   const list = $("list");
   if (!docs.length) {
-    list.innerHTML = `<div class="empty-state"><strong>Nada lançado ainda.</strong>Digite o valor, escolha como pagou e toque em “Lançar gasto”. O relatório do mês se monta sozinho na aba Relatório.</div>`;
+    list.innerHTML = `<div class="empty-state"><strong>Nada lançado ainda.</strong>Digite o valor, escolha como pagou e toque em “Lançar gasto”. Recebeu salário ou algum dinheiro? Escolha <b>Entrada</b> no topo do formulário. O relatório do mês se monta sozinho na aba Relatório.</div>`;
     return;
   }
+  const dayTotal = items => {
+    const g = sum(items.filter(d => !isIn(d))), e = sum(items.filter(isIn));
+    return [g ? fmt(g) : "", e ? `<span style="color:var(--good)">+ ${fmt(e)}</span>` : ""].filter(Boolean).join(" · ");
+  };
   const groups = {};
   docs.forEach(d => (groups[d.data] = groups[d.data] || []).push(d));
   list.innerHTML = Object.entries(groups).map(([day, items]) => `
     <div class="day">
-      <h4><span>${dayLabel(day)}</span><span class="num">${fmt(sum(items))}</span></h4>
+      <h4><span>${dayLabel(day)}</span><span class="num">${dayTotal(items)}</span></h4>
       ${items.map(d => `
         <div class="item${state.editing === d.id ? " editing" : ""}" data-id="${esc(d.id)}" tabindex="0">
-          <span class="dot" style="--c:var(--m-${MET[d.metodo] ? d.metodo : "vale"})"></span>
-          <span class="desc"><b>${esc(d.descricao || d.categoria)}</b><small>${esc(d.categoria)} · ${MET[d.metodo] ? MET[d.metodo].nome : esc(d.metodo)}</small></span>
-          <span class="num">${fmt(d.valor)}</span>
+          ${isIn(d)
+            ? `<span class="dot in" title="Entrada" aria-hidden="true">+</span>`
+            : `<span class="dot" style="--c:var(--m-${MET[d.metodo] ? d.metodo : "vale"})"></span>`}
+          <span class="desc"><b>${esc(d.descricao || d.categoria)}</b><small>${esc(d.categoria)} · ${isIn(d) ? "Entrada" : MET[d.metodo] ? MET[d.metodo].nome : esc(d.metodo)}</small></span>
+          <span class="num${isIn(d) ? " in" : ""}">${isIn(d) ? "+ " : ""}${fmt(d.valor)}</span>
           <button type="button" class="del${state.armedDelete === d.id ? " confirm" : ""}" data-del="${esc(d.id)}" aria-label="Apagar">${state.armedDelete === d.id ? "Apagar" : "×"}</button>
         </div>`).join("")}
     </div>`).join("");
@@ -329,11 +396,13 @@ async function shareFile(name, text, type) {
 
 $("exportCsv").addEventListener("click", async () => {
   const docs = state.all.filter(d => d.mes === state.mes).sort((a, b) => a.data.localeCompare(b.data));
-  if (!docs.length) return msg($("dataMsg"), "Não há gastos neste mês para exportar.", true);
+  if (!docs.length) return msg($("dataMsg"), "Não há lançamentos neste mês para exportar.", true);
   const q = s => `"${String(s).replace(/"/g, '""')}"`;
-  const rows = [["Data", "Descrição", "Categoria", "Pagamento", "Valor"].join(";")]
-    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), q(d.descricao || ""), q(d.categoria), MET[d.metodo] ? MET[d.metodo].nome : d.metodo,
-      (d.valor / 100).toFixed(2).replace(".", ",")].join(";")));
+  // gastos saem negativos e entradas positivas, para a soma da coluna dar o saldo
+  const rows = [["Data", "Tipo", "Descrição", "Categoria", "Pagamento", "Valor"].join(";")]
+    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), isIn(d) ? "Entrada" : "Gasto", q(d.descricao || ""), q(d.categoria),
+      isIn(d) ? "" : MET[d.metodo] ? MET[d.metodo].nome : d.metodo,
+      ((isIn(d) ? 1 : -1) * d.valor / 100).toFixed(2).replace(".", ",")].join(";")));
   const r = await shareFile(`gastos-${state.mes}.csv`, "﻿" + rows.join("\r\n"), "text/csv");
   if (r !== "cancelled") msg($("dataMsg"), "Planilha gerada. Abre no Excel, Numbers ou Google Planilhas.");
 });
@@ -455,7 +524,7 @@ $("backup").addEventListener("click", () => doBackup($("dataMsg")));
 function mergeBackup(list) {
   if (!Array.isArray(list)) return "Esse arquivo não é um backup da Caderneta. Escolha o .json gerado em “Fazer backup”.";
   const valid = list.filter(d => d && typeof d.id === "string" && Number.isFinite(d.valor) && /^\d{4}-\d{2}-\d{2}$/.test(d.data))
-    .map(d => ({ ...d, mes: monthOf(d.data) }));
+    .map(d => normalizar({ ...d, mes: monthOf(d.data) }));
   if (!valid.length) return "Esse backup não tem nenhum gasto.";
   const byId = new Map(state.all.map(d => [d.id, d]));
   let novos = 0;
