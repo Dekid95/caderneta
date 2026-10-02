@@ -9,13 +9,26 @@ const METODOS = [
   { id: "vale", nome: "VR/VA" },
 ];
 const CATEGORIAS = ["Mercado", "Alimentação", "Transporte", "Moradia", "Contas", "Saúde", "Lazer", "Compras", "Educação", "Assinaturas", "Outros"];
-const CATEG_ENTRADA = ["Pagamento", "Avulso", "Vendas", "Reembolso", "Rendimentos", "Presente", "Extra"];
+const CATEG_ENTRADA = ["Pagamento", "Vendas", "Reembolso", "Rendimentos", "Presente", "Extra"];
 // nomes antigos de categorias de entrada → nomes atuais
 const RENOMEAR_ENTRADA = { "Salário": "Pagamento", "Freela / Extra": "Avulso", "Outros": "Extra" };
-const normalizar = d => (d && d.tipo === "entrada" && RENOMEAR_ENTRADA[d.categoria] ? { ...d, categoria: RENOMEAR_ENTRADA[d.categoria] } : d);
+function normalizar(d) {
+  if (!d || d.tipo !== "entrada") return d;
+  const categoria = RENOMEAR_ENTRADA[d.categoria] || d.categoria;
+  // "Avulso" deixou de ser categoria de entrada e virou um tipo próprio
+  if (categoria === "Avulso") return { ...d, tipo: "avulso", categoria: "Avulso" };
+  return categoria === d.categoria ? d : { ...d, categoria };
+}
 const MET = Object.fromEntries(METODOS.map(m => [m.id, m]));
+// tipos: "entrada", "avulso" (dinheiro recebido) e "saida" (gasto).
 // lançamentos antigos não têm "tipo": todos são gastos
-const isIn = d => d.tipo === "entrada";
+const isIn = d => d.tipo === "entrada" || d.tipo === "avulso";
+const kind = d => (isIn(d) ? d.tipo : "saida");
+const TIPOS = {
+  entrada: { nome: "entrada", plural: "Entradas", novo: "Nova entrada", editar: "Editar entrada", lancar: "Lançar entrada" },
+  avulso:  { nome: "avulso",  plural: "Avulsos",  novo: "Novo avulso",  editar: "Editar avulso",  lancar: "Lançar avulso" },
+  saida:   { nome: "gasto",   plural: "Gastos",   novo: "Novo gasto",   editar: "Editar gasto",   lancar: "Lançar gasto" },
+};
 const KEY = "caderneta.gastos.v1";
 const HINT_KEY = "caderneta.hint.fechado";
 const BACKUP_KEY = "caderneta.ultimoBackup";   // ISO do último backup gerado
@@ -79,24 +92,30 @@ $("methods").innerHTML = METODOS.map(m =>
 $("data").value = todayISO();
 
 function formLabels() {
-  const ent = state.tipo === "entrada";
-  $("formTitle").textContent = state.editing ? (ent ? "Editar entrada" : "Editar gasto") : (ent ? "Nova entrada" : "Novo gasto");
-  $("submit").textContent = state.editing ? "Salvar alteração" : (ent ? "Lançar entrada" : "Lançar gasto");
-  $("valorLbl").textContent = ent ? "Valor recebido" : "Valor";
+  const t = TIPOS[state.tipo];
+  $("formTitle").textContent = state.editing ? t.editar : t.novo;
+  $("submit").textContent = state.editing ? "Salvar alteração" : t.lancar;
+  $("valorLbl").textContent = state.tipo === "saida" ? "Valor" : "Valor recebido";
 }
 function setTipo(t) {
   state.tipo = t;
-  const ent = t === "entrada";
+  const recebe = t !== "saida";
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
-  $("categoria").innerHTML = (ent ? CATEG_ENTRADA : CATEGORIAS).map(c => `<option>${c}</option>`).join("");
-  $("metField").hidden = ent;
-  $("amountBox").classList.toggle("in", ent);
-  $("descricao").placeholder = ent ? "ex.: Pagamento de outubro" : "ex.: Mercado Extra";
+  // avulso não tem categoria: só valor, data e descrição
+  $("catField").hidden = t === "avulso";
+  $("catRow").classList.toggle("one", t === "avulso");
+  $("categoria").innerHTML = (t === "entrada" ? CATEG_ENTRADA : CATEGORIAS).map(c => `<option>${c}</option>`).join("");
+  $("metField").hidden = recebe;
+  $("amountBox").classList.toggle("in", recebe);
+  $("descricao").placeholder = { entrada: "ex.: Pagamento de outubro", avulso: "ex.: Sessão – nome do paciente", saida: "ex.: Mercado Extra" }[t];
   formLabels();
 }
 document.querySelector(".seg").addEventListener("click", e => {
   const b = e.target.closest("button[data-t]");
-  if (b && b.dataset.t !== state.tipo) { setTipo(b.dataset.t); msg($("msg"), ""); }
+  if (b && b.dataset.t !== state.tipo) {
+    if (state.editing) resetForm();   // trocar de aba cancela a edição em andamento
+    setTipo(b.dataset.t); state.armedDelete = null; msg($("msg"), ""); render();
+  }
 });
 setTipo("entrada"); // o app sempre abre em Entrada
 
@@ -126,10 +145,10 @@ $("cancel").addEventListener("click", () => { resetForm(); msg($("msg"), ""); re
 
 function startEdit(doc) {
   state.editing = doc.id;
-  setTipo(isIn(doc) ? "entrada" : "saida");
+  setTipo(kind(doc));
   cents = doc.valor; paintValor();
   if (!isIn(doc)) setMetodo(doc.metodo);
-  $("categoria").value = doc.categoria;
+  if (doc.tipo !== "avulso") $("categoria").value = doc.categoria;
   $("data").value = doc.data;
   $("descricao").value = doc.descricao || "";
   $("cancel").hidden = false;
@@ -141,12 +160,12 @@ function startEdit(doc) {
 $("form").addEventListener("submit", e => {
   e.preventDefault();
   const m = $("msg");
-  const ent = state.tipo === "entrada";
+  const ent = state.tipo !== "saida";   // entrada ou avulso: dinheiro recebido
   if (!cents) return msg(m, ent ? "Digite o valor recebido." : "Digite o valor do gasto.", true);
   const data = $("data").value;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return msg(m, ent ? "Escolha a data em que recebeu." : "Escolha a data do gasto.", true);
   const body = {
-    tipo: state.tipo, valor: cents, categoria: $("categoria").value,
+    tipo: state.tipo, valor: cents, categoria: state.tipo === "avulso" ? "Avulso" : $("categoria").value,
     descricao: $("descricao").value.trim(), data, mes: monthOf(data),
   };
   if (!ent) body.metodo = state.metodo;
@@ -162,7 +181,9 @@ $("form").addEventListener("submit", e => {
   }
   if (!persist()) { state.all = before; return msg(m, "Não foi possível salvar: o armazenamento do celular está cheio ou bloqueado.", true); }
   const verbo = state.editing ? "Alterado" : "Lançado";
-  msg(m, ent ? `${verbo}: entrada de ${fmt(cents)} (${body.categoria}).` : `${verbo}: ${fmt(cents)} no ${MET[body.metodo].nome}.`);
+  msg(m, state.tipo === "avulso" ? `${verbo}: avulso de ${fmt(cents)}.`
+    : ent ? `${verbo}: entrada de ${fmt(cents)} (${body.categoria}).`
+    : `${verbo}: ${fmt(cents)} no ${MET[body.metodo].nome}.`);
   resetForm();
   $("data").value = data;
   state.mes = body.mes;
@@ -254,13 +275,15 @@ function render() {
 function renderBalanco(recebido, gasto, entradas) {
   const body = $("balBody");
   if (!recebido) {
-    body.innerHTML = `<p class="bal-note">Lance o que recebeu no mês (pagamento, extras…) em <b>Lançar → Entrada</b> para ver quanto sobrou.</p>`;
+    body.innerHTML = `<p class="bal-note">Lance o que recebeu no mês em <b>Lançar → Entrada</b> ou <b>Avulso</b> para ver quanto sobrou.</p>`;
     return;
   }
   const saldo = recebido - gasto;
   const pct = Math.round(gasto / recebido * 100);
-  // agrupa as entradas por categoria quando há mais de uma
-  const byC = CATEG_ENTRADA.map(c => ({ c, v: sum(entradas.filter(d => d.categoria === c)) })).filter(x => x.v);
+  // detalha o recebido por categoria de entrada e pelos avulsos, quando há mais de uma origem
+  const avulsos = entradas.filter(d => d.tipo === "avulso");
+  const byC = CATEG_ENTRADA.map(c => ({ c, v: sum(entradas.filter(d => d.tipo === "entrada" && d.categoria === c)) })).filter(x => x.v);
+  if (avulsos.length) byC.push({ c: `Avulsos (${avulsos.length})`, v: sum(avulsos) });
   const detalhe = byC.length > 1 ? byC.map(x => `${x.c} ${fmt(x.v)}`).join(" · ") : "";
   body.innerHTML = `
     <div class="bal">
@@ -328,18 +351,22 @@ $("plot").addEventListener("click", e => {
 /* ---------- lista ---------- */
 function renderList(docs) {
   docs = docs.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || "").localeCompare(a.criadoEm || ""));
-  $("listTitle").textContent = "Lançamentos de " + monthName(state.mes, { month: "long" });
-  const gastos = docs.filter(d => !isIn(d)), entradas = docs.filter(isIn);
-  $("listTotal").textContent = [gastos.length ? "gastos " + fmt(sum(gastos)) : "", entradas.length ? "entradas " + fmt(sum(entradas)) : ""].filter(Boolean).join(" · ");
+  // a lista mostra só o tipo selecionado no topo do formulário; o relatório junta os dois
+  const ent = state.tipo !== "saida";
+  docs = docs.filter(d => kind(d) === state.tipo);
+  const mesLongo = monthName(state.mes, { month: "long" });
+  $("listTitle").textContent = `${TIPOS[state.tipo].plural} de ${mesLongo}`;
+  $("listTotal").textContent = docs.length ? (ent ? "+ " : "") + fmt(sum(docs)) + (state.tipo === "avulso" ? ` · ${docs.length}` : "") : "";
   const list = $("list");
   if (!docs.length) {
-    list.innerHTML = `<div class="empty-state"><strong>Nada lançado ainda.</strong>Digite o valor, escolha como pagou e toque em “Lançar gasto”. Recebeu salário ou algum dinheiro? Escolha <b>Entrada</b> no topo do formulário. O relatório do mês se monta sozinho na aba Relatório.</div>`;
+    list.innerHTML = {
+      entrada: `<div class="empty-state"><strong>Nenhuma entrada em ${mesLongo}.</strong>Recebeu pagamento ou algum dinheiro? Digite o valor acima e toque em “Lançar entrada”. O balanço do mês aparece na aba Relatório.</div>`,
+      avulso: `<div class="empty-state"><strong>Nenhum avulso em ${mesLongo}.</strong>Recebeu por um atendimento avulso? Digite o valor, coloque na descrição de quem foi e toque em “Lançar avulso”. Ele entra no balanço do mês junto com as entradas.</div>`,
+      saida: `<div class="empty-state"><strong>Nenhum gasto em ${mesLongo}.</strong>Digite o valor, escolha como pagou e toque em “Lançar gasto”. O relatório do mês se monta sozinho na aba Relatório.</div>`,
+    }[state.tipo];
     return;
   }
-  const dayTotal = items => {
-    const g = sum(items.filter(d => !isIn(d))), e = sum(items.filter(isIn));
-    return [g ? fmt(g) : "", e ? `<span style="color:var(--good)">+ ${fmt(e)}</span>` : ""].filter(Boolean).join(" · ");
-  };
+  const dayTotal = items => (ent ? `<span style="color:var(--good)">+ ${fmt(sum(items))}</span>` : fmt(sum(items)));
   const groups = {};
   docs.forEach(d => (groups[d.data] = groups[d.data] || []).push(d));
   list.innerHTML = Object.entries(groups).map(([day, items]) => `
@@ -350,7 +377,7 @@ function renderList(docs) {
           ${isIn(d)
             ? `<span class="dot in" title="Entrada" aria-hidden="true">+</span>`
             : `<span class="dot" style="--c:var(--m-${MET[d.metodo] ? d.metodo : "vale"})"></span>`}
-          <span class="desc"><b>${esc(d.descricao || d.categoria)}</b><small>${esc(d.categoria)} · ${isIn(d) ? "Entrada" : MET[d.metodo] ? MET[d.metodo].nome : esc(d.metodo)}</small></span>
+          <span class="desc"><b>${esc(d.descricao || d.categoria)}</b><small>${d.tipo === "avulso" ? "Avulso" : esc(d.categoria) + " · " + (isIn(d) ? "Entrada" : MET[d.metodo] ? MET[d.metodo].nome : esc(d.metodo))}</small></span>
           <span class="num${isIn(d) ? " in" : ""}">${isIn(d) ? "+ " : ""}${fmt(d.valor)}</span>
           <button type="button" class="del${state.armedDelete === d.id ? " confirm" : ""}" data-del="${esc(d.id)}" aria-label="Apagar">${state.armedDelete === d.id ? "Apagar" : "×"}</button>
         </div>`).join("")}
@@ -400,7 +427,7 @@ $("exportCsv").addEventListener("click", async () => {
   const q = s => `"${String(s).replace(/"/g, '""')}"`;
   // gastos saem negativos e entradas positivas, para a soma da coluna dar o saldo
   const rows = [["Data", "Tipo", "Descrição", "Categoria", "Pagamento", "Valor"].join(";")]
-    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), isIn(d) ? "Entrada" : "Gasto", q(d.descricao || ""), q(d.categoria),
+    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), { entrada: "Entrada", avulso: "Avulso", saida: "Gasto" }[kind(d)], q(d.descricao || ""), q(d.categoria),
       isIn(d) ? "" : MET[d.metodo] ? MET[d.metodo].nome : d.metodo,
       ((isIn(d) ? 1 : -1) * d.valor / 100).toFixed(2).replace(".", ",")].join(";")));
   const r = await shareFile(`gastos-${state.mes}.csv`, "﻿" + rows.join("\r\n"), "text/csv");
