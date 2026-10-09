@@ -93,8 +93,9 @@ main { max-width: 560px; margin: 0 auto; padding-inline: max(16px, env(safe-area
 .remind .btn.ghost { flex: none; }
 
 /* gasto / entrada toggle */
-.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
-.seg button { height: 38px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 15px; color: var(--ink-2); cursor: pointer; }
+.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.4fr); gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+.seg button { height: 38px; padding: 0 2px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 15px; color: var(--ink-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 420px) { .seg button { font-size: 13px; letter-spacing: -.01em; } }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
 .seg button[data-t="entrada"][aria-pressed="true"],
 .seg button[data-t="avulso"][aria-pressed="true"] { background: var(--good); color: var(--accent-ink); }
@@ -266,6 +267,7 @@ nav.tabs button[aria-selected="true"] { color: var(--accent); }
         <button type="button" data-t="entrada" aria-pressed="true">Entrada</button>
         <button type="button" data-t="saida" aria-pressed="false">Gasto</button>
         <button type="button" data-t="avulso" aria-pressed="false">Avulso</button>
+        <button type="button" data-t="combustivel" aria-pressed="false">Combustível</button>
       </div>
       <h2 id="formTitle">Nova entrada</h2>
       <label class="field">

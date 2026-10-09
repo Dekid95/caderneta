@@ -20,14 +20,17 @@ function normalizar(d) {
   return categoria === d.categoria ? d : { ...d, categoria };
 }
 const MET = Object.fromEntries(METODOS.map(m => [m.id, m]));
-// tipos: "entrada", "avulso" (dinheiro recebido) e "saida" (gasto).
+// tipos: "entrada", "avulso" (dinheiro recebido), "saida" (gasto) e "combustivel" (gasto com aba própria).
 // lançamentos antigos não têm "tipo": todos são gastos
-const isIn = d => d.tipo === "entrada" || d.tipo === "avulso";
-const kind = d => (isIn(d) ? d.tipo : "saida");
+const recebeTipo = t => t === "entrada" || t === "avulso";
+const isIn = d => recebeTipo(d.tipo);
+const kind = d => (isIn(d) || d.tipo === "combustivel" ? d.tipo : "saida");
+const COMBUSTIVEL = "Combustível";
 const TIPOS = {
-  entrada: { nome: "entrada", plural: "Entradas", novo: "Nova entrada", editar: "Editar entrada", lancar: "Lançar entrada" },
-  avulso:  { nome: "avulso",  plural: "Avulsos",  novo: "Novo avulso",  editar: "Editar avulso",  lancar: "Lançar avulso" },
-  saida:   { nome: "gasto",   plural: "Gastos",   novo: "Novo gasto",   editar: "Editar gasto",   lancar: "Lançar gasto" },
+  entrada:     { nome: "entrada",     plural: "Entradas",    novo: "Nova entrada",      editar: "Editar entrada",      lancar: "Lançar entrada" },
+  avulso:      { nome: "avulso",      plural: "Avulsos",     novo: "Novo avulso",       editar: "Editar avulso",       lancar: "Lançar avulso" },
+  saida:       { nome: "gasto",       plural: "Gastos",      novo: "Novo gasto",        editar: "Editar gasto",        lancar: "Lançar gasto" },
+  combustivel: { nome: "combustível", plural: "Combustível", novo: "Novo abastecimento", editar: "Editar abastecimento", lancar: "Lançar combustível" },
 };
 const KEY = "caderneta.gastos.v1";
 const HINT_KEY = "caderneta.hint.fechado";
@@ -95,19 +98,20 @@ function formLabels() {
   const t = TIPOS[state.tipo];
   $("formTitle").textContent = state.editing ? t.editar : t.novo;
   $("submit").textContent = state.editing ? "Salvar alteração" : t.lancar;
-  $("valorLbl").textContent = state.tipo === "saida" ? "Valor" : "Valor recebido";
+  $("valorLbl").textContent = recebeTipo(state.tipo) ? "Valor recebido" : "Valor";
 }
 function setTipo(t) {
   state.tipo = t;
-  const recebe = t !== "saida";
+  const recebe = recebeTipo(t);
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
-  // avulso não tem categoria: só valor, data e descrição
-  $("catField").hidden = t === "avulso";
-  $("catRow").classList.toggle("one", t === "avulso");
+  // avulso e combustível não têm categoria a escolher: só valor, data e descrição
+  const semCat = t === "avulso" || t === "combustivel";
+  $("catField").hidden = semCat;
+  $("catRow").classList.toggle("one", semCat);
   $("categoria").innerHTML = (t === "entrada" ? CATEG_ENTRADA : CATEGORIAS).map(c => `<option>${c}</option>`).join("");
   $("metField").hidden = recebe;
   $("amountBox").classList.toggle("in", recebe);
-  $("descricao").placeholder = { entrada: "ex.: Pagamento de outubro", avulso: "ex.: Sessão – nome do paciente", saida: "ex.: Mercado Extra" }[t];
+  $("descricao").placeholder = { entrada: "ex.: Pagamento de outubro", avulso: "ex.: Sessão – nome do paciente", saida: "ex.: Mercado Extra", combustivel: "ex.: Posto Shell – 40 L" }[t];
   formLabels();
 }
 document.querySelector(".seg").addEventListener("click", e => {
@@ -148,7 +152,7 @@ function startEdit(doc) {
   setTipo(kind(doc));
   cents = doc.valor; paintValor();
   if (!isIn(doc)) setMetodo(doc.metodo);
-  if (doc.tipo !== "avulso") $("categoria").value = doc.categoria;
+  if (doc.tipo !== "avulso" && doc.tipo !== "combustivel") $("categoria").value = doc.categoria;
   $("data").value = doc.data;
   $("descricao").value = doc.descricao || "";
   $("cancel").hidden = false;
@@ -160,12 +164,13 @@ function startEdit(doc) {
 $("form").addEventListener("submit", e => {
   e.preventDefault();
   const m = $("msg");
-  const ent = state.tipo !== "saida";   // entrada ou avulso: dinheiro recebido
+  const ent = recebeTipo(state.tipo);   // entrada ou avulso: dinheiro recebido
   if (!cents) return msg(m, ent ? "Digite o valor recebido." : "Digite o valor do gasto.", true);
   const data = $("data").value;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return msg(m, ent ? "Escolha a data em que recebeu." : "Escolha a data do gasto.", true);
+  const categoria = { avulso: "Avulso", combustivel: COMBUSTIVEL }[state.tipo] || $("categoria").value;
   const body = {
-    tipo: state.tipo, valor: cents, categoria: state.tipo === "avulso" ? "Avulso" : $("categoria").value,
+    tipo: state.tipo, valor: cents, categoria,
     descricao: $("descricao").value.trim(), data, mes: monthOf(data),
   };
   if (!ent) body.metodo = state.metodo;
@@ -183,6 +188,7 @@ $("form").addEventListener("submit", e => {
   const verbo = state.editing ? "Alterado" : "Lançado";
   msg(m, state.tipo === "avulso" ? `${verbo}: avulso de ${fmt(cents)}.`
     : ent ? `${verbo}: entrada de ${fmt(cents)} (${body.categoria}).`
+    : state.tipo === "combustivel" ? `${verbo}: combustível de ${fmt(cents)} no ${MET[body.metodo].nome}.`
     : `${verbo}: ${fmt(cents)} no ${MET[body.metodo].nome}.`);
   resetForm();
   $("data").value = data;
@@ -246,7 +252,7 @@ function render() {
   $("cardNote").textContent = cred ? `${fmt(cred)} na fatura do cartão` : "";
 
   // por categoria
-  const byC = CATEGORIAS.map(c => ({ c, v: sum(docs.filter(d => d.categoria === c)) })).filter(x => x.v).sort((a, b) => b.v - a.v);
+  const byC = [...CATEGORIAS, COMBUSTIVEL].map(c => ({ c, v: sum(docs.filter(d => d.categoria === c)) })).filter(x => x.v).sort((a, b) => b.v - a.v);
   const maxC = byC.length ? byC[0].v : 1;
   $("cats").innerHTML = byC.length ? byC.map(x => `
     <div class="cat"><span>${x.c}</span><div class="track"><div class="fill" style="width:${x.v / maxC * 100}%"></div></div><span class="num">${fmt(x.v)}</span></div>`).join("")
@@ -352,17 +358,18 @@ $("plot").addEventListener("click", e => {
 function renderList(docs) {
   docs = docs.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || "").localeCompare(a.criadoEm || ""));
   // a lista mostra só o tipo selecionado no topo do formulário; o relatório junta os dois
-  const ent = state.tipo !== "saida";
+  const ent = recebeTipo(state.tipo);
   docs = docs.filter(d => kind(d) === state.tipo);
   const mesLongo = monthName(state.mes, { month: "long" });
   $("listTitle").textContent = `${TIPOS[state.tipo].plural} de ${mesLongo}`;
-  $("listTotal").textContent = docs.length ? (ent ? "+ " : "") + fmt(sum(docs)) + (state.tipo === "avulso" ? ` · ${docs.length}` : "") : "";
+  $("listTotal").textContent = docs.length ? (ent ? "+ " : "") + fmt(sum(docs)) + (state.tipo === "avulso" || state.tipo === "combustivel" ? ` · ${docs.length}` : "") : "";
   const list = $("list");
   if (!docs.length) {
     list.innerHTML = {
       entrada: `<div class="empty-state"><strong>Nenhuma entrada em ${mesLongo}.</strong>Recebeu pagamento ou algum dinheiro? Digite o valor acima e toque em “Lançar entrada”. O balanço do mês aparece na aba Relatório.</div>`,
       avulso: `<div class="empty-state"><strong>Nenhum avulso em ${mesLongo}.</strong>Recebeu por um atendimento avulso? Digite o valor, coloque na descrição de quem foi e toque em “Lançar avulso”. Ele entra no balanço do mês junto com as entradas.</div>`,
       saida: `<div class="empty-state"><strong>Nenhum gasto em ${mesLongo}.</strong>Digite o valor, escolha como pagou e toque em “Lançar gasto”. O relatório do mês se monta sozinho na aba Relatório.</div>`,
+      combustivel: `<div class="empty-state"><strong>Nenhum abastecimento em ${mesLongo}.</strong>Abasteceu? Digite o valor, escolha como pagou e toque em “Lançar combustível”. Ele entra nos gastos do mês, na categoria Combustível.</div>`,
     }[state.tipo];
     return;
   }
@@ -427,7 +434,7 @@ $("exportCsv").addEventListener("click", async () => {
   const q = s => `"${String(s).replace(/"/g, '""')}"`;
   // gastos saem negativos e entradas positivas, para a soma da coluna dar o saldo
   const rows = [["Data", "Tipo", "Descrição", "Categoria", "Pagamento", "Valor"].join(";")]
-    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), { entrada: "Entrada", avulso: "Avulso", saida: "Gasto" }[kind(d)], q(d.descricao || ""), q(d.categoria),
+    .concat(docs.map(d => [d.data.split("-").reverse().join("/"), { entrada: "Entrada", avulso: "Avulso", saida: "Gasto", combustivel: "Combustível" }[kind(d)], q(d.descricao || ""), q(d.categoria),
       isIn(d) ? "" : MET[d.metodo] ? MET[d.metodo].nome : d.metodo,
       ((isIn(d) ? 1 : -1) * d.valor / 100).toFixed(2).replace(".", ",")].join(";")));
   const r = await shareFile(`gastos-${state.mes}.csv`, "﻿" + rows.join("\r\n"), "text/csv");
