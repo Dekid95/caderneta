@@ -32,7 +32,12 @@ const TIPOS = {
   saida:       { nome: "gasto",       plural: "Gastos",      novo: "Novo gasto",        editar: "Editar gasto",        lancar: "Lançar gasto" },
   combustivel: { nome: "combustível", plural: "Combustível", novo: "Novo abastecimento", editar: "Editar abastecimento", lancar: "Lançar combustível" },
 };
+// contas separadas: cada lançamento é de uma, e cada uma tem seu relatório.
+// lançamentos de antes das contas não têm "conta": são do Pessoal
+const CONTAS = { pessoal: "Pessoal", consultorio: "Consultório" };
+const contaOf = d => (d.conta === "consultorio" ? "consultorio" : "pessoal");
 const KEY = "caderneta.gastos.v1";
+const CONTA_KEY = "caderneta.conta";           // última conta aberta
 const HINT_KEY = "caderneta.hint.fechado";
 const BACKUP_KEY = "caderneta.ultimoBackup";   // ISO do último backup gerado
 const SNOOZE_KEY = "caderneta.lembreteAdiado"; // ISO até quando o lembrete fica escondido
@@ -63,7 +68,24 @@ function persist() {
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-const state = { all: load(), mes: monthOf(todayISO()), metodo: "pix", tipo: "entrada", editing: null, armedDelete: null, tab: "lancar" };
+const state = { all: load(), mes: monthOf(todayISO()), conta: CONTAS[getPref(CONTA_KEY)] ? getPref(CONTA_KEY) : "pessoal", metodo: "pix", tipo: "entrada", editing: null, armedDelete: null, tab: "lancar" };
+const daConta = () => state.all.filter(d => contaOf(d) === state.conta);
+
+/* ---------- conta: Pessoal / Consultório ---------- */
+function setConta(c) {
+  state.conta = c;
+  setPref(CONTA_KEY, c);
+  document.body.dataset.conta = c;   // troca a cor de destaque do app
+  document.querySelectorAll("#contas button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.c === c)));
+}
+$("contas").addEventListener("click", e => {
+  const b = e.target.closest("button[data-c]");
+  if (b && b.dataset.c !== state.conta) {
+    if (state.editing) resetForm();   // trocar de conta cancela a edição em andamento
+    setConta(b.dataset.c); state.armedDelete = null; msg($("msg"), ""); msg($("dataMsg"), ""); render();
+  }
+});
+setConta(state.conta);
 
 /* ---------- tabs ---------- */
 function setTab(t) {
@@ -170,7 +192,7 @@ $("form").addEventListener("submit", e => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return msg(m, ent ? "Escolha a data em que recebeu." : "Escolha a data do gasto.", true);
   const categoria = { avulso: "Avulso", combustivel: COMBUSTIVEL }[state.tipo] || $("categoria").value;
   const body = {
-    tipo: state.tipo, valor: cents, categoria,
+    tipo: state.tipo, conta: state.conta, valor: cents, categoria,
     descricao: $("descricao").value.trim(), data, mes: monthOf(data),
   };
   if (!ent) body.metodo = state.metodo;
@@ -207,10 +229,11 @@ function render() {
   const isCurrent = cur === monthOf(today);
   $("monthLabel").textContent = monthName(cur);
   $("next").disabled = cur >= monthOf(today);
-  const doMes = state.all.filter(d => d.mes === cur);
+  const conta = daConta();
+  const doMes = conta.filter(d => d.mes === cur);
   const docs = doMes.filter(d => !isIn(d));          // gastos: base de todo o relatório
   const entradas = doMes.filter(isIn);
-  const prevDocs = state.all.filter(d => d.mes === prev && !isIn(d));
+  const prevDocs = conta.filter(d => d.mes === prev && !isIn(d));
   const total = sum(docs);
 
   renderBalanco(sum(entradas), total, entradas);
@@ -350,7 +373,7 @@ $("plot").addEventListener("click", e => {
   document.querySelectorAll("#plot .col.on").forEach(c => c.classList.remove("on"));
   if (!col) return;
   col.classList.add("on");
-  const ds = state.all.filter(d => d.data === col.dataset.iso && !isIn(d));
+  const ds = daConta().filter(d => d.data === col.dataset.iso && !isIn(d));
   $("readout").textContent = `${dayLabel(col.dataset.iso)} · ${fmt(Number(col.dataset.v))}` + (ds.length ? ` · ${ds.length} ${ds.length === 1 ? "gasto" : "gastos"}` : "");
 });
 
@@ -429,15 +452,15 @@ async function shareFile(name, text, type) {
 }
 
 $("exportCsv").addEventListener("click", async () => {
-  const docs = state.all.filter(d => d.mes === state.mes).sort((a, b) => a.data.localeCompare(b.data));
-  if (!docs.length) return msg($("dataMsg"), "Não há lançamentos neste mês para exportar.", true);
+  const docs = daConta().filter(d => d.mes === state.mes).sort((a, b) => a.data.localeCompare(b.data));
+  if (!docs.length) return msg($("dataMsg"), `Não há lançamentos do ${CONTAS[state.conta]} neste mês para exportar.`, true);
   const q = s => `"${String(s).replace(/"/g, '""')}"`;
   // gastos saem negativos e entradas positivas, para a soma da coluna dar o saldo
   const rows = [["Data", "Tipo", "Descrição", "Categoria", "Pagamento", "Valor"].join(";")]
     .concat(docs.map(d => [d.data.split("-").reverse().join("/"), { entrada: "Entrada", avulso: "Avulso", saida: "Gasto", combustivel: "Combustível" }[kind(d)], q(d.descricao || ""), q(d.categoria),
       isIn(d) ? "" : MET[d.metodo] ? MET[d.metodo].nome : d.metodo,
       ((isIn(d) ? 1 : -1) * d.valor / 100).toFixed(2).replace(".", ",")].join(";")));
-  const r = await shareFile(`gastos-${state.mes}.csv`, "﻿" + rows.join("\r\n"), "text/csv");
+  const r = await shareFile(`caderneta-${state.conta}-${state.mes}.csv`, "﻿" + rows.join("\r\n"), "text/csv");
   if (r !== "cancelled") msg($("dataMsg"), "Planilha gerada. Abre no Excel, Numbers ou Google Planilhas.");
 });
 
