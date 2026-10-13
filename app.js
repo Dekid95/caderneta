@@ -75,7 +75,12 @@ const daConta = () => state.all.filter(d => contaOf(d) === state.conta);
 function setConta(c) {
   state.conta = c;
   setPref(CONTA_KEY, c);
-  document.body.dataset.conta = c;   // troca a cor de destaque do app
+  document.documentElement.dataset.conta = c;   // troca as cores do app
+  // barra de status do celular acompanha o fundo da conta
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    m.content = c === "consultorio" ? (dark ? "#11141a" : "#f1f3f7") : (dark ? "#121714" : "#f2f4f1");
+  });
   document.querySelectorAll("#contas button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.c === c)));
 }
 $("contas").addEventListener("click", e => {
