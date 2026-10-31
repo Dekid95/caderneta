@@ -225,15 +225,30 @@ $("form").addEventListener("submit", e => {
 });
 
 /* ---------- month nav ---------- */
-$("prev").addEventListener("click", () => { state.mes = shiftMonth(state.mes, -1); state.armedDelete = null; render(); });
-$("next").addEventListener("click", () => { state.mes = shiftMonth(state.mes, 1); state.armedDelete = null; render(); });
+// a data do formulário acompanha o mês aberto: no mês atual é hoje,
+// nos outros é o mesmo dia (ou o último dia, se o mês for mais curto)
+function dataNoMes(ym) {
+  const hoje = todayISO();
+  if (ym === monthOf(hoje)) return hoje;
+  return `${ym}-${pad(Math.min(Number(hoje.slice(8)), daysIn(ym)))}`;
+}
+function goMonth(ym) {
+  state.mes = ym; state.armedDelete = null;
+  if (!state.editing) $("data").value = dataNoMes(ym);
+  render();
+}
+$("prev").addEventListener("click", () => goMonth(shiftMonth(state.mes, -1)));
+$("next").addEventListener("click", () => goMonth(shiftMonth(state.mes, 1)));
+// tocar no nome do mês volta para o mês atual
+$("monthLabel").addEventListener("click", () => { if (state.mes !== monthOf(todayISO())) goMonth(monthOf(todayISO())); });
 
 /* ---------- render ---------- */
 function render() {
   const cur = state.mes, prev = shiftMonth(cur, -1), today = todayISO();
   const isCurrent = cur === monthOf(today);
   $("monthLabel").textContent = monthName(cur);
-  $("next").disabled = cur >= monthOf(today);
+  $("monthLabel").classList.toggle("away", !isCurrent);
+  $("monthLabel").setAttribute("aria-label", isCurrent ? monthName(cur) : `${monthName(cur)}. Toque para voltar ao mês atual`);
   const conta = daConta();
   const doMes = conta.filter(d => d.mes === cur);
   const docs = doMes.filter(d => !isIn(d));          // gastos: base de todo o relatório
